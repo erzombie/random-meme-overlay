@@ -16,7 +16,7 @@
   const qs   = new URLSearchParams(location.search);
   const cat  = (qs.get('cat') || 'memes').toLowerCase();    // anime | hmm | memes
   const mode = (qs.get('mode')|| 'reddit').toLowerCase();   // reddit | list
-  const subsQ= (qs.get('subs')|| '').trim();
+  const subsQ= (qs.get('subs')|| '').trim();                // optional override: "subA,subB"
   const DEBUG = qs.has('debug');
 
   const ALLOW = {
@@ -26,13 +26,13 @@
   };
 
   // Accept only direct image hosts
-  const allowDomains = ['i.redd.it','preview.redd.it','i.imgur.com'];
+  const allowDomains = ['i.redd.it','preview.redd.it','external-preview.redd.it','i.imgur.com'];
 
-  const pick = a => a[Math.floor(Math.random()*a.length)];
-  const isImg = u => /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(u);
-  const host = u => { try { return new URL(u).host.toLowerCase(); } catch { return ''; } };
+  const pick   = a => a[Math.floor(Math.random()*a.length)];
+  const isImg  = u => /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(u);
+  const host   = u => { try { return new URL(u).host.toLowerCase(); } catch { return ''; } };
   const okDomain = u => allowDomains.some(d => host(u).endsWith(d));
-  const unesc = s => s.replace(/&amp;/g,'&');
+  const unesc  = s => s.replace(/&amp;/g,'&');
   const showMsg = t => { if (!DEBUG) return; const m=document.getElementById('msg'); m.textContent=t; m.style.display='flex'; };
 
   async function fetchText(url){
@@ -53,42 +53,51 @@
 
   // Reddit mode: scan ALL allowed subs, collect images, then pick one
   async function fromReddit(){
-    const subs = subsQ ? subsQ.split(',').map(s=>s.trim()).filter(Boolean) : (ALLOW[cat] || []);
+    const subs = subsQ
+      ? subsQ.split(',').map(s=>s.trim()).filter(Boolean)
+      : (ALLOW[cat] || []);
     if (!subs.length) throw new Error('no subs for '+cat);
 
-    const all = [];
+    const allImages = [];
     for (const sub of subs){
-      try{
-        const api = `https://www.reddit.com/r/${encodeURIComponent(sub)}/hot.json?limit=75`;
-        const r = await fetch(api, {headers:{'Accept':'application/json'}});
-        if (!r.ok) { if (DEBUG) console.warn('fetch fail', sub, r.status); continue; }
-        const j = await r.json();
-        const posts = (j.data?.children||[]).map(x=>x.data).filter(Boolean);
+      // try two endpoints, prefer api.reddit.com with raw_json=1
+      for (const ep of [
+        s => `https://api.reddit.com/r/${encodeURIComponent(s)}/hot?limit=75&raw_json=1`,
+        s => `https://www.reddit.com/r/${encodeURIComponent(s)}/hot.json?limit=75&raw_json=1`
+      ]){
+        try{
+          const r = await fetch(ep(sub), {headers:{'Accept':'application/json'}});
+          if (!r.ok) continue;
+          const j = await r.json();
+          const posts = (j.data?.children||[]).map(x=>x.data).filter(Boolean);
 
-        for (const p of posts){
-          if (p.over_18) continue;
-          if (p.is_video) continue;
-          if (p.is_gallery) continue;
+          for (const p of posts){
+            if (p.over_18 || p.is_video || p.is_gallery) continue;
 
-          let u = (p.url_overridden_by_dest || p.url || '').trim();
-          if (!isImg(u) || !okDomain(u)){
-            const prev = p.preview?.images?.[0]?.source?.url;
-            if (prev) u = unesc(prev);
+            let u = (p.url_overridden_by_dest || p.url || '').trim();
+            if (!isImg(u) || !okDomain(u)){
+              const prev = p.preview?.images?.[0]?.source?.url; // raw_json=1 gives clean URL
+              if (prev) u = prev;
+            }
+            if (u && isImg(u) && okDomain(u)) allImages.push(u);
           }
-          if (u && isImg(u) && okDomain(u)) all.push(u);
+          break; // this sub worked; go to next sub
+        }catch{
+          // try next endpoint, then next sub
         }
-      }catch(e){ if (DEBUG) console.warn('sub error', sub, e); }
+      }
     }
-    if (all.length) return pick(all);
-    throw new Error('no reddit images');
+    if (!allImages.length) throw new Error('no reddit images');
+    return pick(allImages);
   }
 
+  // ---- choose source, fallback, and render one image ----
   let url = null;
   try {
     url = (mode==='list') ? await fromList() : await fromReddit();
   } catch(e) {
     if (DEBUG) showMsg('No image via '+mode+'. Trying list fallback…');
-    if (mode!=='list') { try { url = await fromList(); } catch(_){} }
+    if (mode!=='list') { try { url = await fromList(); } catch {} }
   }
 
   if (!url) { showMsg('No image found. (Check adblock or try list mode)'); return; }
