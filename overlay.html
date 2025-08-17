@@ -10,23 +10,26 @@
 <div id="wrap"><img id="img" alt="meme"></div>
 <script>
 (async () => {
-  const qs = new URLSearchParams(location.search);
-  const cat   = (qs.get('cat') || 'cat').toLowerCase();
-  const mode  = (qs.get('mode')|| 'reddit').toLowerCase();   // "reddit" or "list"
-  const subsQ = (qs.get('subs')|| '').trim();
-  const allowDomains = ['i.redd.it','preview.redd.it','i.imgur.com'];
+  const qs   = new URLSearchParams(location.search);
+  const cat  = (qs.get('cat') || 'memes').toLowerCase();       // anime | hmm | memes
+  const mode = (qs.get('mode')|| 'reddit').toLowerCase();      // "reddit" or "list"
+  const subsQ= (qs.get('subs')|| '').trim();                   // optional override: "subA,subB"
 
+  // Only these categories/subs (SFW-ish)
   const ALLOW = {
-    cat:  ['catmemes','MeowIRL','illegallysmolcats'],
-    dog:  ['dogmemes','blop','WhatsWrongWithYourDog'],
-    game: ['gamingmemes','pcmasterrace','steamdeck']
+    anime: ['animemes','animememes','goodanimemes'],
+    hmm:   ['blursedimages','hmm','hmmm','HolUp'],
+    memes: ['dankmemes','memes','Bossfight']
   };
 
-  const pick=a=>a[Math.floor(Math.random()*a.length)];
-  const isImg=u=>/\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(u);
-  const host=u=>{ try{ return new URL(u).host.toLowerCase(); }catch{ return ''; } };
-  const okDomain=u=>allowDomains.some(d=>host(u).endsWith(d));
-  const unesc=s=>s.replace(/&amp;/g,'&');
+  // Accept only direct image hosts
+  const allowDomains = ['i.redd.it','preview.redd.it','i.imgur.com'];
+
+  const pick = a => a[Math.floor(Math.random()*a.length)];
+  const isImg = u => /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(u);
+  const host = u => { try { return new URL(u).host.toLowerCase(); } catch { return ''; } };
+  const okDomain = u => allowDomains.some(d => host(u).endsWith(d));
+  const unesc = s => s.replace(/&amp;/g,'&');
 
   async function fetchText(url){
     const r = await fetch(url, {cache:'no-store', headers:{'Accept':'text/plain, application/json'}});
@@ -34,6 +37,7 @@
     return r.text();
   }
 
+  // Optional curated list mode (memes/<cat>/index.txt)
   async function fromList(){
     const listURL = `memes/${encodeURIComponent(cat)}/index.txt`;
     const t = await fetchText(listURL);
@@ -43,8 +47,10 @@
     return pick(urls);
   }
 
+  // Reddit mode: SFW only, skip videos/galleries, image URL or preview fallback, allowed hosts only
   async function fromReddit(){
-    const subs = subsQ ? subsQ.split(',').map(s=>s.trim()).filter(Boolean) : (ALLOW[cat] || []);
+    const subs = subsQ ? subsQ.split(',').map(s=>s.trim()).filter(Boolean)
+                       : (ALLOW[cat] || []);
     if (!subs.length) throw new Error('no subs for '+cat);
 
     const tried = new Set();
@@ -79,12 +85,12 @@
 
   let url = null;
   try { url = (mode==='list') ? await fromList() : await fromReddit(); }
-  catch(e){ if (mode!=='list') { try{ url = await fromList(); } catch{} } }
+  catch(e){ if (mode!=='list') { try { url = await fromList(); } catch{} } }
   if (!url) return;
 
   const img = document.getElementById('img');
-  img.onload = ()=> img.classList.add('show');
-  img.onerror = ()=> console.warn('image failed', url);
-  img.src = url + (url.includes('?')?'&':'?') + 't=' + Date.now();
+  img.onload  = () => img.classList.add('show');
+  img.onerror = () => console.warn('image failed', url);
+  img.src = url + (url.includes('?')?'&':'?') + 't=' + Date.now(); // cache-bust
 })();
 </script>
