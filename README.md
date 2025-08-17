@@ -10,6 +10,12 @@ https://<your-username>.github.io/random-meme-overlay/overlay.html?cat=cat&mode=
 ## Add/Change categories
 Edit the `ALLOW` object inside `overlay.html` to set safe subreddits for each category.
 
+Current category:
+anime: ['animemes','animememes','goodanimemes']
+hmm:   ['blursedimages','hmm','hmmm','HolUp']
+meme: ['dankmemes','memes','Bossfight']
+thai: ['thaithai','PimThaiMaiDai']
+
 ## Curated list mode
 Create `memes/<category>/index.txt` with one image URL per line (jpg/png/gif/webp on i.redd.it, preview.redd.it, i.imgur.com).
 
