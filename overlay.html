@@ -1,28 +1,42 @@
 <!doctype html>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Meme Overlay</title>
 <style>
   html,body{margin:0;background:transparent;overflow:hidden}
-  #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
-  img{max-width:100vw;max-height:100vh;opacity:0;transition:opacity .25s}
+  #wrap{position:fixed;inset:0}
+  img{
+    position:absolute; inset:0;
+    width:100vw; height:100vh;
+    object-fit:contain;                 /* can switch via ?fit=cover */
+    object-position:center center;
+    image-orientation:from-image;       /* respect EXIF rotation */
+    opacity:0; transition:opacity .25s;
+  }
   .show{opacity:1}
-  #msg{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
-       color:#ddd;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;font-size:18px}
+  #msg{
+    position:fixed; inset:0; display:none;
+    align-items:center; justify-content:center;
+    color:#ddd; text-shadow:0 1px 2px #0008;
+    font:18px system-ui, Segoe UI, Roboto, Arial, sans-serif;
+  }
 </style>
 <div id="wrap"><img id="img" alt="meme"></div>
 <div id="msg"></div>
 <script>
 (async () => {
-  const qs   = new URLSearchParams(location.search);
-  const rawCat = (qs.get('cat') || 'meme').toLowerCase();   // default to "meme"
-  const mode   = (qs.get('mode')|| 'reddit').toLowerCase(); // reddit | list
-  const subsQ  = (qs.get('subs')|| '').trim();              // optional override
+  const qs     = new URLSearchParams(location.search);
+  const rawCat = (qs.get('cat') || 'meme').toLowerCase();   // default category
+  const mode   = (qs.get('mode')|| 'reddit').toLowerCase(); // "reddit" | "list"
+  const subsQ  = (qs.get('subs')|| '').trim();              // optional: "subA,subB"
+  const fit    = (qs.get('fit') || 'contain').toLowerCase();// "contain" | "cover"
   const DEBUG  = qs.has('debug');
 
-  // alias so "meme" and "memes" both work; add more if needed
-  const CAT_ALIAS = { memes:'meme', meme:'meme' };
+  // accept both "meme" and "memes", and allow future aliases
+  const CAT_ALIAS = { memes:'meme', meme:'meme', thailand:'thai' };
   const cat = CAT_ALIAS[rawCat] || rawCat;
 
+  // ---- EDIT YOUR SAFE SUBS HERE ----
   const ALLOW = {
     anime: ['animemes','animememes','goodanimemes'],
     hmm:   ['blursedimages','hmm','hmmm','HolUp'],
@@ -30,6 +44,7 @@
     thai:  ['thaithai','PimThaiMaiDai']
   };
 
+  // allow only direct/static image hosts
   const allowDomains = [
     'i.redd.it','preview.redd.it','external-preview.redd.it','i.imgur.com','redditmedia.com'
   ];
@@ -46,7 +61,7 @@
     return r.text();
   }
 
-  // Optional curated list mode: memes/<cat>/index.txt (one URL per line)
+  // ------- LIST MODE (curated text file) -------
   async function fromList(){
     const listURL = `memes/${encodeURIComponent(cat)}/index.txt`;
     const t = await fetchText(listURL);
@@ -56,7 +71,7 @@
     return pick(urls);
   }
 
-  // Reddit mode with gallery/crosspost/preview handling
+  // ------- REDDIT MODE (handles preview, galleries, crossposts) -------
   async function fromReddit(){
     const subs = subsQ
       ? subsQ.split(',').map(s=>s.trim()).filter(Boolean)
@@ -78,7 +93,7 @@
 
     const collectFromPost = (p) => {
       if (!p) return;
-      // gallery
+      // 1) gallery (media_metadata)
       if (p.is_gallery || p.gallery_data || p.media_metadata){
         const items = (p.gallery_data?.items || []);
         if (items.length){
@@ -97,10 +112,10 @@
           }
         }
       }
-      // direct
+      // 2) direct
       let u = (p.url_overridden_by_dest || p.url || '').trim();
       if (isImg(u) && okDomain(u)) { pushImg(u); if (all.length) return; }
-      // preview
+      // 3) preview fallback
       const prev = p.preview?.images?.[0]?.source?.url;
       if (prev) { pushImg(prev); if (all.length) return; }
     };
@@ -116,7 +131,7 @@
             const j = await r.json();
             const posts = (j.data?.children || []).map(x=>x.data).filter(Boolean);
             for (const p of posts){
-              if (p.over_18) continue;
+              if (p.over_18) continue; // SFW only
               if (Array.isArray(p.crosspost_parent_list) && p.crosspost_parent_list.length){
                 collectFromPost(p.crosspost_parent_list[0]);
               } else {
@@ -135,7 +150,7 @@
     return pick(all);
   }
 
-  // -------- choose source, fallback, and render one image --------
+  // ------- Choose source, fallback, render -------
   let url = null;
   try {
     url = (mode==='list') ? await fromList() : await fromReddit();
@@ -147,8 +162,6 @@
   if (!url) { showMsg('No image found. (Try another category or use list mode)'); return; }
 
   const img = document.getElementById('img');
-  img.onload  = () => img.classList.add('show');
-  img.onerror = () => showMsg('Image failed to load.');
-  img.src = url + (url.includes('?')?'&':'?') + 't=' + Date.now(); // cache-bust
-})();
-</script>
+  img.style.objectFit = (fit === 'cover' ? 'cover' : 'contain');
+ 
+::contentReference[oaicite:0]{index=0}
