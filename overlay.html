@@ -6,16 +6,19 @@
   #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
   img{max-width:100vw;max-height:100vh;opacity:0;transition:opacity .25s}
   .show{opacity:1}
+  #msg{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+       color:#ddd;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;font-size:18px}
 </style>
 <div id="wrap"><img id="img" alt="meme"></div>
+<div id="msg"></div>
 <script>
 (async () => {
   const qs   = new URLSearchParams(location.search);
-  const cat  = (qs.get('cat') || 'memes').toLowerCase();       // anime | hmm | memes
-  const mode = (qs.get('mode')|| 'reddit').toLowerCase();      // "reddit" or "list"
-  const subsQ= (qs.get('subs')|| '').trim();                   // optional override: "subA,subB"
+  const cat  = (qs.get('cat') || 'memes').toLowerCase();    // anime | hmm | memes
+  const mode = (qs.get('mode')|| 'reddit').toLowerCase();   // reddit | list
+  const subsQ= (qs.get('subs')|| '').trim();
+  const DEBUG = qs.has('debug');
 
-  // Only these categories/subs (SFW-ish)
   const ALLOW = {
     anime: ['animemes','animememes','goodanimemes'],
     hmm:   ['blursedimages','hmm','hmmm','HolUp'],
@@ -30,6 +33,7 @@
   const host = u => { try { return new URL(u).host.toLowerCase(); } catch { return ''; } };
   const okDomain = u => allowDomains.some(d => host(u).endsWith(d));
   const unesc = s => s.replace(/&amp;/g,'&');
+  const showMsg = t => { if (!DEBUG) return; const m=document.getElementById('msg'); m.textContent=t; m.style.display='flex'; };
 
   async function fetchText(url){
     const r = await fetch(url, {cache:'no-store', headers:{'Accept':'text/plain, application/json'}});
@@ -37,7 +41,7 @@
     return r.text();
   }
 
-  // Optional curated list mode (memes/<cat>/index.txt)
+  // Optional curated list mode: memes/<cat>/index.txt (one URL per line)
   async function fromList(){
     const listURL = `memes/${encodeURIComponent(cat)}/index.txt`;
     const t = await fetchText(listURL);
@@ -47,50 +51,51 @@
     return pick(urls);
   }
 
-  // Reddit mode: SFW only, skip videos/galleries, image URL or preview fallback, allowed hosts only
+  // Reddit mode: scan ALL allowed subs, collect images, then pick one
   async function fromReddit(){
-    const subs = subsQ ? subsQ.split(',').map(s=>s.trim()).filter(Boolean)
-                       : (ALLOW[cat] || []);
+    const subs = subsQ ? subsQ.split(',').map(s=>s.trim()).filter(Boolean) : (ALLOW[cat] || []);
     if (!subs.length) throw new Error('no subs for '+cat);
 
-    const tried = new Set();
-    for (let attempt=0; attempt<Math.min(3, subs.length); attempt++){
-      let sub = pick(subs);
-      while (tried.has(sub) && tried.size < subs.length) sub = pick(subs);
-      tried.add(sub);
+    const all = [];
+    for (const sub of subs){
+      try{
+        const api = `https://www.reddit.com/r/${encodeURIComponent(sub)}/hot.json?limit=75`;
+        const r = await fetch(api, {headers:{'Accept':'application/json'}});
+        if (!r.ok) { if (DEBUG) console.warn('fetch fail', sub, r.status); continue; }
+        const j = await r.json();
+        const posts = (j.data?.children||[]).map(x=>x.data).filter(Boolean);
 
-      const api = `https://www.reddit.com/r/${encodeURIComponent(sub)}/hot.json?limit=50`;
-      const r = await fetch(api, {headers:{'Accept':'application/json'}});
-      if (!r.ok) continue;
-      const j = await r.json();
-      const posts = (j.data?.children||[]).map(x=>x.data).filter(Boolean);
+        for (const p of posts){
+          if (p.over_18) continue;
+          if (p.is_video) continue;
+          if (p.is_gallery) continue;
 
-      const images = [];
-      for (const p of posts){
-        if (p.over_18) continue;
-        if (p.is_video) continue;
-        if (p.is_gallery) continue;
-
-        let u = (p.url_overridden_by_dest || p.url || '').trim();
-        if (!isImg(u) || !okDomain(u)){
-          const prev = p.preview?.images?.[0]?.source?.url;
-          if (prev) u = unesc(prev);
+          let u = (p.url_overridden_by_dest || p.url || '').trim();
+          if (!isImg(u) || !okDomain(u)){
+            const prev = p.preview?.images?.[0]?.source?.url;
+            if (prev) u = unesc(prev);
+          }
+          if (u && isImg(u) && okDomain(u)) all.push(u);
         }
-        if (u && isImg(u) && okDomain(u)) images.push(u);
-      }
-      if (images.length) return pick(images);
+      }catch(e){ if (DEBUG) console.warn('sub error', sub, e); }
     }
+    if (all.length) return pick(all);
     throw new Error('no reddit images');
   }
 
   let url = null;
-  try { url = (mode==='list') ? await fromList() : await fromReddit(); }
-  catch(e){ if (mode!=='list') { try { url = await fromList(); } catch{} } }
-  if (!url) return;
+  try {
+    url = (mode==='list') ? await fromList() : await fromReddit();
+  } catch(e) {
+    if (DEBUG) showMsg('No image via '+mode+'. Trying list fallback…');
+    if (mode!=='list') { try { url = await fromList(); } catch(_){} }
+  }
+
+  if (!url) { showMsg('No image found. (Check adblock or try list mode)'); return; }
 
   const img = document.getElementById('img');
   img.onload  = () => img.classList.add('show');
-  img.onerror = () => console.warn('image failed', url);
+  img.onerror = () => showMsg('Image failed to load.');
   img.src = url + (url.includes('?')?'&':'?') + 't=' + Date.now(); // cache-bust
 })();
 </script>
