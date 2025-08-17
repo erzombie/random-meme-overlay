@@ -27,7 +27,13 @@
   };
 
   // Accept only direct image hosts
-  const allowDomains = ['i.redd.it','preview.redd.it','external-preview.redd.it','i.imgur.com'];
+  const allowDomains = [
+  'i.redd.it',
+  'preview.redd.it',
+  'external-preview.redd.it',
+  'i.imgur.com',
+  'redditmedia.com'
+  ];
 
   const pick   = a => a[Math.floor(Math.random()*a.length)];
   const isImg  = u => /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(u);
@@ -54,55 +60,95 @@
 
   // Reddit mode: scan ALL allowed subs, collect images, then pick one
   async function fromReddit(){
-    const subs = subsQ
-      ? subsQ.split(',').map(s=>s.trim()).filter(Boolean)
-      : (ALLOW[cat] || []);
-    if (!subs.length) throw new Error('no subs for '+cat);
+  const subs = subsQ
+    ? subsQ.split(',').map(s=>s.trim()).filter(Boolean)
+    : (ALLOW[cat] || []);
+  if (!subs.length) throw new Error('no subs for '+cat);
 
-    const allImages = [];
-    for (const sub of subs){
-      // try two endpoints, prefer api.reddit.com with raw_json=1
-      for (const ep of [
-        s => `https://api.reddit.com/r/${encodeURIComponent(s)}/hot?limit=75&raw_json=1`,
-        s => `https://www.reddit.com/r/${encodeURIComponent(s)}/hot.json?limit=75&raw_json=1`
-      ]){
-        try{
-          const r = await fetch(ep(sub), {headers:{'Accept':'application/json'}});
-          if (!r.ok) continue;
-          const j = await r.json();
-          const posts = (j.data?.children||[]).map(x=>x.data).filter(Boolean);
+  // prefer api.reddit.com + raw_json=1 (clean preview URLs)
+  const endpoints = [
+    (s,which) => `https://api.reddit.com/r/${encodeURIComponent(s)}/${which}?limit=75&raw_json=1`,
+    (s,which) => `https://www.reddit.com/r/${encodeURIComponent(s)}/${which}.json?limit=75&raw_json=1`
+  ];
+  const listings = ['hot', 'new', 'top?t=day'];
 
-          for (const p of posts){
-            if (p.over_18 || p.is_video || p.is_gallery) continue;
+  const all = [];
+  let usedSubs = 0;
 
-            let u = (p.url_overridden_by_dest || p.url || '').trim();
-            if (!isImg(u) || !okDomain(u)){
-              const prev = p.preview?.images?.[0]?.source?.url; // raw_json=1 gives clean URL
-              if (prev) u = prev;
-            }
-            if (u && isImg(u) && okDomain(u)) allImages.push(u);
-          }
-          break; // this sub worked; go to next sub
-        }catch{
-          // try next endpoint, then next sub
+  const pushImg = (u) => {
+    if (!u) return;
+    // unescape &amp; if present
+    u = u.replace(/&amp;/g,'&').trim();
+    if (isImg(u) && okDomain(u)) all.push(u);
+  };
+
+  // extract first image from a post (handles gallery, preview, direct)
+  const collectFromPost = (p) => {
+    if (!p) return;
+
+    // 1) gallery
+    if (p.is_gallery || p.gallery_data || p.media_metadata){
+      const items = (p.gallery_data?.items || []);
+      if (items.length){
+        for (const it of items){
+          const id = it.media_id;
+          const mm = p.media_metadata?.[id];
+          const u  = mm?.s?.u || mm?.s?.gif;
+          if (u){ pushImg(u); if (all.length) return; }
+        }
+      } else {
+        // no gallery_data order, pick first media_metadata entry
+        const keys = Object.keys(p.media_metadata || {});
+        if (keys.length){
+          const mm = p.media_metadata[keys[0]];
+          pushImg(mm?.s?.u || mm?.s?.gif);
+          if (all.length) return;
         }
       }
     }
-    if (!allImages.length) throw new Error('no reddit images');
-    return pick(allImages);
+
+    // 2) direct link
+    let u = (p.url_overridden_by_dest || p.url || '').trim();
+    if (isImg(u) && okDomain(u)) { pushImg(u); if (all.length) return; }
+
+    // 3) preview fallback
+    const prev = p.preview?.images?.[0]?.source?.url;
+    if (prev) { pushImg(prev); if (all.length) return; }
+  };
+
+  for (const sub of subs){
+    let got = false;
+    for (const which of listings){
+      for (const ep of endpoints){
+        try{
+          const url = ep(sub, which);
+          const r = await fetch(url, {headers:{'Accept':'application/json'}});
+          if (!r.ok) continue;
+          const j = await r.json();
+          const posts = (j.data?.children || []).map(x=>x.data).filter(Boolean);
+          for (const p of posts){
+            if (p.over_18) continue;
+
+            // prefer crosspost parent content if present
+            if (Array.isArray(p.crosspost_parent_list) && p.crosspost_parent_list.length){
+              collectFromPost(p.crosspost_parent_list[0]);
+            } else {
+              collectFromPost(p);
+            }
+            if (all.length) { got = true; break; }
+          }
+          if (got) break;
+        } catch {}
+      }
+      if (got) break;
+    }
+    if (got) usedSubs++;
   }
 
-  // ---- choose source, fallback, and render one image ----
-  let url = null;
-  try {
-    url = (mode==='list') ? await fromList() : await fromReddit();
-  } catch(e) {
-    if (DEBUG) showMsg('No image via '+mode+'. Trying list fallback…');
-    if (mode!=='list') { try { url = await fromList(); } catch {} }
-  }
-
-  if (!url) { showMsg('No image found. (Check adblock or try list mode)'); return; }
-
+  if (!all.length) throw new Error('no reddit images');
+  return pick(all);
+}
+  
   const img = document.getElementById('img');
   img.onload  = () => img.classList.add('show');
   img.onerror = () => showMsg('Image failed to load.');
